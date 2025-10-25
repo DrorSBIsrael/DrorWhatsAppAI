@@ -1,7 +1,7 @@
 # Node modules
 node_modules/
 
-# Environment variables
+# Environment variables (סודות!)
 .env
 
 # Logs
