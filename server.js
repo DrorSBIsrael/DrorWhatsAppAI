@@ -33,6 +33,7 @@ const YOUR_PERSONALITY = process.env.YOUR_PERSONALITY || `
 אתה תמיד עוזר ומנסה לפתור בעיות.
 אתה מדבר בעברית בסגנון פשוט וישיר.
 `;
+
 // זיכרון שיחות (בזיכרון זמני - ייאבד אם השרת נכבה)
 // בגרסה מתקדמת נשמור במסד נתונים
 const conversationMemory = {};
@@ -151,13 +152,31 @@ async function getChatHistory(phoneNumber, count = 10) {
 // ========================================
 app.post('/webhook', async (req, res) => {
   try {
+    // לוגים מפורטים לדיבוג
     console.log('📩 אירוע חדש מ-WhatsApp');
-
+    console.log('🔍 סוג אירוע:', req.body.typeWebhook);
+    console.log('📦 נתוני Webhook מלאים:', JSON.stringify(req.body, null, 2));
+    
     // ========================================
     // זיהוי הודעות יוצאות (כשאתה עונה ללקוח!)
     // ========================================
     if (req.body.typeWebhook === 'outgoingMessageReceived' || req.body.typeWebhook === 'outgoingAPIMessageReceived') {
-      const recipientNumber = req.body.messageData?.chatId?.replace('@c.us', '').replace('@g.us', '');
+      console.log('📤 זוהתה הודעה יוצאת!');
+      
+      // ניסיון מספר 1: chatId
+      let recipientNumber = req.body.messageData?.chatId?.replace('@c.us', '').replace('@g.us', '');
+      
+      // ניסיון מספר 2: אולי זה בשדה אחר
+      if (!recipientNumber && req.body.senderData?.chatId) {
+        recipientNumber = req.body.senderData.chatId.replace('@c.us', '').replace('@g.us', '');
+      }
+      
+      // ניסיון מספר 3: אולי זה בשדה idMessage
+      if (!recipientNumber && req.body.messageData?.extendedTextMessageData?.contextInfo?.participant) {
+        recipientNumber = req.body.messageData.extendedTextMessageData.contextInfo.participant.replace('@c.us', '').replace('@g.us', '');
+      }
+      
+      console.log('📱 נמען שזוהה:', recipientNumber);
       
       if (recipientNumber) {
         // אתה עונה ללקוח! הבוט נכנס למצב שקט
@@ -169,6 +188,8 @@ app.post('/webhook', async (req, res) => {
         
         // שמור זיכרון
         saveMemory().catch(err => console.error('שגיאה בשמירה:', err));
+      } else {
+        console.log('⚠️ לא הצלחתי לזהות מספר נמען - הדפסתי את כל הנתונים למעלה');
       }
       return res.sendStatus(200);
     }
