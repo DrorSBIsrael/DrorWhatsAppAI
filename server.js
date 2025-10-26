@@ -33,10 +33,15 @@ const YOUR_PERSONALITY = process.env.YOUR_PERSONALITY || `
 אתה תמיד עוזר ומנסה לפתור בעיות.
 אתה מדבר בעברית בסגנון פשוט וישיר.
 `;
-
 // זיכרון שיחות (בזיכרון זמני - ייאבד אם השרת נכבה)
 // בגרסה מתקדמת נשמור במסד נתונים
 const conversationMemory = {};
+
+// 🆕 מצב השהיה - מספרים שהבוט לא יענה להם (כי אתה עונה!)
+const pausedConversations = {};
+
+// 🆕 כמה זמן הבוט שקט אחרי שאתה עונה (במילישניות)
+const PAUSE_DURATION = parseInt(process.env.PAUSE_DURATION_MINUTES || '30') * 60 * 1000; // ברירת מחדל: 30 דקות
 
 // נתיב לקובץ זיכרון (לשמירה קבועה)
 const MEMORY_FILE = path.join(__dirname, 'conversation_memory.json');
@@ -45,6 +50,7 @@ console.log('🚀 השרת מתחיל...');
 console.log('📋 רשימה לבנה:', WHITELIST.length, 'מספרים');
 console.log('🚫 רשימה שחורה:', BLACKLIST.length, 'מספרים');
 console.log('👥 קבוצות: מתעלם מקבוצות - רק הודעות פרטיות ✅');
+console.log('⏸️ מצב השהיה: כשאתה עונה, הבוט שקט ל-' + (PAUSE_DURATION / 60000) + ' דקות ✅');
 console.log('🌍 מצב עונה לכולם:', REPLY_TO_ALL ? 'מופעל ✅' : 'כבוי ❌');
 console.log('👤 השם שלך:', YOUR_NAME);
 
@@ -145,7 +151,27 @@ async function getChatHistory(phoneNumber, count = 10) {
 // ========================================
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('📩 הודעה חדשה התקבלה');
+    console.log('📩 אירוע חדש מ-WhatsApp');
+
+    // ========================================
+    // זיהוי הודעות יוצאות (כשאתה עונה ללקוח!)
+    // ========================================
+    if (req.body.typeWebhook === 'outgoingMessageReceived' || req.body.typeWebhook === 'outgoingAPIMessageReceived') {
+      const recipientNumber = req.body.messageData?.chatId?.replace('@c.us', '').replace('@g.us', '');
+      
+      if (recipientNumber) {
+        // אתה עונה ללקוח! הבוט נכנס למצב שקט
+        pausedConversations[recipientNumber] = {
+          pausedAt: Date.now(),
+          reason: 'user_responded'
+        };
+        console.log(`⏸️ אתה עונה ל-${recipientNumber} - הבוט נכנס למצב שקט (${PAUSE_DURATION / 60000} דקות)`);
+        
+        // שמור זיכרון
+        saveMemory().catch(err => console.error('שגיאה בשמירה:', err));
+      }
+      return res.sendStatus(200);
+    }
 
     // בודק שזה אירוע של הודעה נכנסת
     if (req.body.typeWebhook !== 'incomingMessageReceived') {
@@ -173,6 +199,91 @@ app.post('/webhook', async (req, res) => {
 
     console.log(`📱 מספר שולח: ${senderNumber}`);
     console.log(`💬 הודעה: ${messageText}`);
+
+    // ========================================
+    // פקודות מיוחדות (רק מהמספר שלך!)
+    // ========================================
+    const YOUR_PHONE = process.env.YOUR_PHONE_NUMBER ? process.env.YOUR_PHONE_NUMBER.trim() : null;
+    
+    if (YOUR_PHONE && senderNumber === YOUR_PHONE) {
+      // אתה שולח הודעה מהמספר האישי שלך
+      
+      if (messageText.startsWith('/השהה ') || messageText.startsWith('/pause ')) {
+        // פקודה להשהות שיחה עם מספר מסוים
+        const targetNumber = messageText.split(' ')[1];
+        if (targetNumber) {
+          pausedConversations[targetNumber] = {
+            pausedAt: Date.now(),
+            reason: 'manual_command'
+          };
+          console.log(`⏸️ הפעלת השהיה ידנית ל-${targetNumber}`);
+          
+          await axios.post(
+            `https://api.green-api.com/waInstance${GREEN_API_ID}/sendMessage/${GREEN_API_TOKEN}`,
+            {
+              chatId: `${YOUR_PHONE}@c.us`,
+              message: `✅ הבוט מושהה ל-${targetNumber} (${PAUSE_DURATION / 60000} דקות)`
+            }
+          );
+        }
+        return res.sendStatus(200);
+      }
+      
+      if (messageText.startsWith('/המשך ') || messageText.startsWith('/resume ')) {
+        // פקודה להמשיך שיחה עם מספר מסוים
+        const targetNumber = messageText.split(' ')[1];
+        if (targetNumber && pausedConversations[targetNumber]) {
+          delete pausedConversations[targetNumber];
+          console.log(`▶️ ביטלת השהיה ל-${targetNumber}`);
+          
+          await axios.post(
+            `https://api.green-api.com/waInstance${GREEN_API_ID}/sendMessage/${GREEN_API_TOKEN}`,
+            {
+              chatId: `${YOUR_PHONE}@c.us`,
+              message: `✅ הבוט חזר לפעולה ל-${targetNumber}`
+            }
+          );
+        }
+        return res.sendStatus(200);
+      }
+      
+      if (messageText === '/סטטוס' || messageText === '/status') {
+        // הצג מצב כל השיחות
+        const pausedCount = Object.keys(pausedConversations).length;
+        const activeCount = Object.keys(conversationMemory).length - pausedCount;
+        
+        await axios.post(
+          `https://api.green-api.com/waInstance${GREEN_API_ID}/sendMessage/${GREEN_API_TOKEN}`,
+          {
+            chatId: `${YOUR_PHONE}@c.us`,
+            message: `📊 סטטוס הבוט:\n\n` +
+                     `🤖 שיחות פעילות: ${activeCount}\n` +
+                     `⏸️ שיחות מושהות: ${pausedCount}\n` +
+                     `💾 סה"כ שיחות בזיכרון: ${Object.keys(conversationMemory).length}`
+          }
+        );
+        return res.sendStatus(200);
+      }
+    }
+
+    // ========================================
+    // בדיקת מצב השהיה (האם אתה עונה לשיחה הזו?)
+    // ========================================
+    if (pausedConversations[senderNumber]) {
+      const pausedInfo = pausedConversations[senderNumber];
+      const timePassed = Date.now() - pausedInfo.pausedAt;
+      
+      if (timePassed < PAUSE_DURATION) {
+        // עדיין במצב השהיה
+        const minutesLeft = Math.ceil((PAUSE_DURATION - timePassed) / 60000);
+        console.log(`⏸️ שיחה עם ${senderNumber} מושהית (עוד ${minutesLeft} דקות) - הבוט לא יענה`);
+        return res.sendStatus(200);
+      } else {
+        // תקופת ההשהיה עברה - הבוט חוזר לפעולה
+        delete pausedConversations[senderNumber];
+        console.log(`▶️ תקופת ההשהיה ל-${senderNumber} הסתיימה - הבוט חוזר לפעולה`);
+      }
+    }
 
     // ========================================
     // בדיקת רשימה שחורה (עדיפות ראשונה!)
