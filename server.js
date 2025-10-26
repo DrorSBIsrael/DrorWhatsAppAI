@@ -24,11 +24,11 @@ const BLACKLIST = process.env.BLACKLIST ? process.env.BLACKLIST.split(',').map(n
 const REPLY_TO_ALL = process.env.REPLY_TO_ALL === 'true';
 
 // 🆕 שם שלך (ייכנס לפרומפט)
-const YOUR_NAME = process.env.YOUR_NAME || 'דרור';
+const YOUR_NAME = process.env.YOUR_NAME || 'דרור פרינץ';
 
 // 🆕 מידע עליך ועל העסק (זה מה שיגרום לבוט לענות כמוך!)
 const YOUR_PERSONALITY = process.env.YOUR_PERSONALITY || `
-אתה ${YOUR_NAME}, בעלים של חברת ניהול חניונים.
+אתה ${YOUR_NAME}, מנהל של חברת לציוד אוטומטטי בחניונים.
 אתה עונה ללקוחות בצורה ידידותית ומקצועית.
 אתה תמיד עוזר ומנסה לפתור בעיות.
 אתה מדבר בעברית בסגנון פשוט וישיר.
@@ -44,6 +44,7 @@ const MEMORY_FILE = path.join(__dirname, 'conversation_memory.json');
 console.log('🚀 השרת מתחיל...');
 console.log('📋 רשימה לבנה:', WHITELIST.length, 'מספרים');
 console.log('🚫 רשימה שחורה:', BLACKLIST.length, 'מספרים');
+console.log('👥 קבוצות: מתעלם מקבוצות - רק הודעות פרטיות ✅');
 console.log('🌍 מצב עונה לכולם:', REPLY_TO_ALL ? 'מופעל ✅' : 'כבוי ❌');
 console.log('👤 השם שלך:', YOUR_NAME);
 
@@ -158,8 +159,17 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    const senderNumber = req.body.senderData.sender.replace('@c.us', '');
+    const senderNumber = req.body.senderData.sender.replace('@c.us', '').replace('@g.us', '');
     const messageText = messageData.textMessageData?.textMessage || messageData.extendedTextMessageData?.text || '';
+    
+    // ========================================
+    // בדיקה שזה לא קבוצה (רק הודעות פרטיות!)
+    // ========================================
+    const isGroup = req.body.senderData.sender.includes('@g.us');
+    if (isGroup) {
+      console.log(`👥 הודעה מקבוצה - מתעלם!`);
+      return res.sendStatus(200);
+    }
 
     console.log(`📱 מספר שולח: ${senderNumber}`);
     console.log(`💬 הודעה: ${messageText}`);
