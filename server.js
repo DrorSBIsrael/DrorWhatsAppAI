@@ -212,9 +212,13 @@ app.post('/webhook', async (req, res) => {
     // ========================================
     // בדיקה שזה לא קבוצה (רק הודעות פרטיות!)
     // ========================================
-    const isGroup = req.body.senderData.sender.includes('@g.us');
+    // בודק גם את ה-sender וגם את ה-chatId - כי לפעמים ההודעה מגיעה מקבוצה
+    const isGroup = req.body.senderData.sender.includes('@g.us') || 
+                    req.body.senderData.chatId?.includes('@g.us') ||
+                    messageData.chatId?.includes('@g.us');
+    
     if (isGroup) {
-      console.log(`👥 הודעה מקבוצה - מתעלם!`);
+      console.log(`👥 הודעה מקבוצה - מתעלם לחלוטין! (לא עונה בקבוצה ולא בפרטי)`);
       return res.sendStatus(200);
     }
 
